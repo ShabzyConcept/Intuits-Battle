@@ -7,17 +7,34 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import type { Battle } from "@/types/database";
+import { useAccount } from "wagmi";
+import { isAdminWallet } from "@/lib/auth";
 
 export default function BattlesPage() {
   const [battles, setBattles] = useState<Battle[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const { address, isConnected } = useAccount();
 
   const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
   useEffect(() => {
     fetchBattles();
   }, []);
+
+  // Check admin status
+  useEffect(() => {
+    async function checkAdmin() {
+      if (!address || !isConnected) {
+        setIsAdmin(false);
+        return;
+      }
+      const adminStatus = await isAdminWallet(address);
+      setIsAdmin(adminStatus);
+    }
+    checkAdmin();
+  }, [address, isConnected]);
 
   async function fetchBattles() {
     try {
@@ -100,9 +117,11 @@ export default function BattlesPage() {
                 <p className="text-gray-400 mt-1">Watch epic battles between community members</p>
               </div>
             </div>
-            <Link href="/battles/create">
-              <Button className="bg-blue-600 hover:bg-blue-700">Create Battle</Button>
-            </Link>
+            {isConnected && isAdmin && (
+              <Link href="/battles/create">
+                <Button className="bg-blue-600 hover:bg-blue-700">Create Battle</Button>
+              </Link>
+            )}
           </div>
         </div>
       </div>
