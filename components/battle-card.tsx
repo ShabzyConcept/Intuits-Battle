@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { useIntuitionClients } from "@/hooks/useIntuitionClients";
 import { deposit } from "@0xintuition/protocol";
 import { type Address } from "viem";
+import { ConnectButton } from "@rainbow-me/rainbowkit";
 
 interface BattleCardProps {
   battle: Battle;
@@ -250,7 +251,16 @@ export function BattleCard({ battle, onVote, userVote, isVoting = false, showVot
               <div className="text-center">
                 <p className="text-sm font-medium text-white">{battle.member_a?.name}</p>
               </div>
-              {showVoteButtons && !isVotingDisabled && (
+              {showVoteButtons && !isConnected && battle.status === "active" && (
+                <ConnectButton.Custom>
+                  {({ openConnectModal }) => (
+                    <Button size="sm" variant="outline" onClick={openConnectModal} className="border-gray-700 hover:border-blue-500 hover:text-blue-400">
+                      Connect Wallet
+                    </Button>
+                  )}
+                </ConnectButton.Custom>
+              )}
+              {showVoteButtons && isConnected && !isVotingDisabled && (
                 <Button
                   size="sm"
                   variant={currentUserVote === battle.member_a_id ? "default" : "outline"}
@@ -260,9 +270,9 @@ export function BattleCard({ battle, onVote, userVote, isVoting = false, showVot
                   {checkingVote ? "Checking..." : localVoting ? "Voting..." : currentUserVote === battle.member_a_id ? "Voted" : "Vote"}
                 </Button>
               )}
-              {showVoteButtons && isVotingDisabled && battle.status === "active" && (
+              {showVoteButtons && isConnected && isVotingDisabled && battle.status === "active" && (
                 <Button size="sm" variant="outline" disabled className="border-gray-700 text-gray-500 cursor-not-allowed bg-transparent">
-                  {!isConnected ? "Connect Wallet" : hasVoted ? "Already Voted" : isExpired ? "Expired" : "Vote"}
+                  {hasVoted ? "Already Voted" : isExpired ? "Expired" : "Vote"}
                 </Button>
               )}
             </div>
@@ -284,7 +294,16 @@ export function BattleCard({ battle, onVote, userVote, isVoting = false, showVot
               <div className="text-center">
                 <p className="text-sm font-medium text-white">{battle.member_b?.name}</p>
               </div>
-              {showVoteButtons && !isVotingDisabled && (
+              {showVoteButtons && !isConnected && battle.status === "active" && (
+                <ConnectButton.Custom>
+                  {({ openConnectModal }) => (
+                    <Button size="sm" variant="outline" onClick={openConnectModal} className="border-gray-700 hover:border-blue-500 hover:text-blue-400">
+                      Connect Wallet
+                    </Button>
+                  )}
+                </ConnectButton.Custom>
+              )}
+              {showVoteButtons && isConnected && !isVotingDisabled && (
                 <Button
                   size="sm"
                   variant={currentUserVote === battle.member_b_id ? "default" : "outline"}
@@ -294,9 +313,9 @@ export function BattleCard({ battle, onVote, userVote, isVoting = false, showVot
                   {checkingVote ? "Checking..." : localVoting ? "Voting..." : currentUserVote === battle.member_b_id ? "Voted" : "Vote"}
                 </Button>
               )}
-              {showVoteButtons && isVotingDisabled && battle.status === "active" && (
+              {showVoteButtons && isConnected && isVotingDisabled && battle.status === "active" && (
                 <Button size="sm" variant="outline" disabled className="border-gray-700 text-gray-500 cursor-not-allowed bg-transparent">
-                  {!isConnected ? "Connect Wallet" : hasVoted ? "Already Voted" : isExpired ? "Expired" : "Vote"}
+                  {hasVoted ? "Already Voted" : isExpired ? "Expired" : "Vote"}
                 </Button>
               )}
             </div>

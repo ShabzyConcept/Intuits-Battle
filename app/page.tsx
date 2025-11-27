@@ -15,6 +15,8 @@ import { supabaseBrowser } from "@/lib/supabase/client";
 import { createAtomFromThing } from "@0xintuition/sdk";
 import { toast, useToast } from "@/hooks/use-toast";
 import { CommunityMemberRes } from "@/types/database";
+import { isAdminWallet, canCreateMember, getMemberCountByWallet } from "@/lib/auth";
+import { useAccount } from "wagmi";
 
 interface CreateMemberDialogProps {
   onSuccess?: () => void;
@@ -23,8 +25,13 @@ interface CreateMemberDialogProps {
 function CreateMemberDialog({ onSuccess }: CreateMemberDialogProps) {
   const client = useIntuitionClients();
   const { toast } = useToast();
+  const { address, isConnected } = useAccount();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [canCreate, setCanCreate] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [memberCount, setMemberCount] = useState(0);
+  const [checkingPermissions, setCheckingPermissions] = useState(true);
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -32,6 +39,39 @@ function CreateMemberDialog({ onSuccess }: CreateMemberDialogProps) {
     url: "",
     category: "Members",
   });
+
+  // Check permissions when dialog opens or wallet changes
+  useEffect(() => {
+    async function checkPermissions() {
+      if (!address || !isConnected) {
+        setCanCreate(false);
+        setIsAdmin(false);
+        setMemberCount(0);
+        setCheckingPermissions(false);
+        return;
+      }
+
+      setCheckingPermissions(true);
+      try {
+        const [adminStatus, createPermission, count] = await Promise.all([isAdminWallet(address), canCreateMember(address), getMemberCountByWallet(address)]);
+
+        setIsAdmin(adminStatus);
+        setCanCreate(createPermission);
+        setMemberCount(count);
+      } catch (error) {
+        console.error("Error checking permissions:", error);
+        setCanCreate(false);
+        setIsAdmin(false);
+        setMemberCount(0);
+      } finally {
+        setCheckingPermissions(false);
+      }
+    }
+
+    if (open) {
+      checkPermissions();
+    }
+  }, [address, isConnected, open]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,6 +81,26 @@ function CreateMemberDialog({ onSuccess }: CreateMemberDialogProps) {
       toast({
         title: "Wallet not connected",
         description: "Please connect your wallet first.",
+        variant: "error",
+      });
+      setLoading(false);
+      return;
+    }
+
+    if (!address || !isConnected) {
+      toast({
+        title: "Wallet not connected",
+        description: "Please connect your wallet first.",
+        variant: "error",
+      });
+      setLoading(false);
+      return;
+    }
+
+    if (!canCreate) {
+      toast({
+        title: "Permission denied",
+        description: isAdmin ? "Unable to create member at this time." : "You can only create one member. You have already created a member.",
         variant: "error",
       });
       setLoading(false);
@@ -71,6 +131,7 @@ function CreateMemberDialog({ onSuccess }: CreateMemberDialogProps) {
             upvotes: 0,
             downvotes: 0,
             is_active: true,
+            created_by_wallet: address.toLowerCase(),
           },
         ])
         .select()
@@ -94,6 +155,12 @@ function CreateMemberDialog({ onSuccess }: CreateMemberDialogProps) {
       setFormData({ name: "", description: "", image: "", url: "", category: "Members" });
       setOpen(false);
 
+      // Refresh permissions
+      setMemberCount(memberCount + 1);
+      if (!isAdmin) {
+        setCanCreate(false);
+      }
+
       if (onSuccess) onSuccess();
     } catch (err) {
       console.error("Failed creating member:", err);
@@ -110,7 +177,7 @@ function CreateMemberDialog({ onSuccess }: CreateMemberDialogProps) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="bg-blue-600 hover:bg-blue-700 text-white flex items-center">
+        <Button className="bg-blue-600 hover:bg-blue-700 text-white flex items-center" disabled={!isConnected}>
           <Plus className="w-5 h-5 mr-2" />
           Create Member
         </Button>
@@ -118,6 +185,14 @@ function CreateMemberDialog({ onSuccess }: CreateMemberDialogProps) {
       <DialogContent className="bg-gray-900 border-gray-800">
         <DialogHeader>
           <DialogTitle className="text-white">Create New Community Member</DialogTitle>
+          {!isConnected && <p className="text-sm text-yellow-400 mt-2">Please connect your wallet to create a member</p>}
+          {isConnected && checkingPermissions && <p className="text-sm text-gray-400 mt-2">Checking permissions...</p>}
+          {isConnected && !checkingPermissions && !canCreate && (
+            <p className="text-sm text-red-400 mt-2">{isAdmin ? "Unable to create member at this time" : `You can only create one member. You have already created ${memberCount} member(s).`}</p>
+          )}
+          {isConnected && !checkingPermissions && canCreate && (
+            <p className="text-sm text-green-400 mt-2">{isAdmin ? "Admin: You can create unlimited members" : `You can create ${1 - memberCount} more member(s)`}</p>
+          )}
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
@@ -155,11 +230,19 @@ function CreateMemberDialog({ onSuccess }: CreateMemberDialogProps) {
               </SelectContent>
             </Select>
           </div>
-          <Button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 flex items-center justify-center">
+          <Button
+            type="submit"
+            disabled={loading || !canCreate || checkingPermissions || !isConnected}
+            className="w-full bg-blue-600 hover:bg-blue-700 flex items-center justify-center disabled:bg-gray-700 disabled:cursor-not-allowed">
             {loading ? (
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Creating...
+              </>
+            ) : checkingPermissions ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Checking...
               </>
             ) : (
               "Create Member"
@@ -174,6 +257,8 @@ function CreateMemberDialog({ onSuccess }: CreateMemberDialogProps) {
 export default function HomePage() {
   const [members, setMembers] = useState<CommunityMemberRes[]>([]);
   const [loading, setLoading] = useState(false);
+  const { address, isConnected } = useAccount();
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const fetchMembers = async () => {
     try {
@@ -208,6 +293,20 @@ export default function HomePage() {
     fetchMembers();
   }, []);
 
+  // Check admin status
+  useEffect(() => {
+    async function checkAdmin() {
+      if (!address || !isConnected) {
+        setIsAdmin(false);
+        return;
+      }
+      const adminStatus = await isAdminWallet(address);
+      console.log("Admin check for", address, ":", adminStatus);
+      setIsAdmin(adminStatus);
+    }
+    checkAdmin();
+  }, [address, isConnected]);
+
   return (
     <div className="min-h-screen bg-linear-to-br from-gray-900 via-gray-800 to-gray-900">
       {/* Header */}
@@ -233,7 +332,7 @@ export default function HomePage() {
         <div className="container mx-auto text-center">
           <div className="max-w-4xl mx-auto space-y-6">
             <h1 className="text-5xl md:text-6xl font-bold text-white leading-tight">
-              <span className="bg-linear-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">Intuit 👁️</span> <span className="text-white">Battle</span>
+              <span className="bg-linear-to-r from-blue-400 to-purple-500 bg-clip-text text-transparent">Intuit </span> 👁️ <span className="text-white">Battle</span>
             </h1>
             <p className="text-xl text-gray-300 max-w-2xl mx-auto leading-relaxed">
               Vote for your favorite community leaders and watch them compete in epic battles. Shape the future of our community through democratic participation on the Intuition Network.
@@ -247,6 +346,14 @@ export default function HomePage() {
                   Watch Battles
                 </Button>
               </Link>
+              {isConnected && isAdmin && (
+                <Link href="/battles/create">
+                  <Button size="lg" className="bg-purple-600 hover:bg-purple-700 px-8">
+                    <Plus className="w-5 h-5 mr-2" />
+                    Create Battle
+                  </Button>
+                </Link>
+              )}
             </div>
           </div>
         </div>

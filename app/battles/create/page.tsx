@@ -8,10 +8,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, Search, Check, Loader2 } from "lucide-react";
+import { ArrowLeft, Search, Check, Loader2, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
+import { useAccount } from "wagmi";
+import { isAdminWallet } from "@/lib/auth";
 
 interface Member {
   id: string;
@@ -33,12 +35,39 @@ export default function CreateBattlePage() {
   const [endDate, setEndDate] = useState("");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [checkingAuth, setCheckingAuth] = useState(true);
   const { toast } = useToast();
   const router = useRouter();
+  const { address, isConnected } = useAccount();
 
   useEffect(() => {
-    fetchMembers();
-  }, []);
+    async function checkAdmin() {
+      if (!address || !isConnected) {
+        setIsAdmin(false);
+        setCheckingAuth(false);
+        return;
+      }
+
+      try {
+        const adminStatus = await isAdminWallet(address);
+        setIsAdmin(adminStatus);
+      } catch (error) {
+        console.error("Error checking admin status:", error);
+        setIsAdmin(false);
+      } finally {
+        setCheckingAuth(false);
+      }
+    }
+
+    checkAdmin();
+  }, [address, isConnected, router, toast]);
+
+  useEffect(() => {
+    if (isAdmin && !checkingAuth) {
+      fetchMembers();
+    }
+  }, [isAdmin, checkingAuth]);
 
   useEffect(() => {
     if (searchQuery.trim() === "") {
@@ -174,6 +203,72 @@ export default function CreateBattlePage() {
     }
   }
 
+  // Show loading or unauthorized state
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-linear-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
+        <Card className="bg-gray-900/50 border-gray-800 p-8">
+          <div className="text-center space-y-4">
+            <Loader2 className="w-12 h-12 animate-spin text-blue-400 mx-auto" />
+            <p className="text-white text-lg">Checking permissions...</p>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-linear-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
+        <Card className="bg-gray-900/50 border-gray-800 p-8 max-w-md">
+          <div className="text-center space-y-4">
+            <ShieldAlert className="w-16 h-16 text-red-400 mx-auto" />
+            <h2 className="text-2xl font-bold text-white">Access Denied</h2>
+            <p className="text-gray-400">Only administrators can create battles.</p>
+            <Link href="/">
+              <Button className="bg-blue-600 hover:bg-blue-700 mt-4">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Return Home
+              </Button>
+            </Link>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
+  // Show access denied page if not admin
+  if (checkingAuth) {
+    return (
+      <div className="min-h-screen bg-linear-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
+        <div className="text-center">
+          <Loader2 className="w-12 h-12 animate-spin text-blue-400 mx-auto mb-4" />
+          <p className="text-gray-400">Checking permissions...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isConnected || !isAdmin) {
+    return (
+      <div className="min-h-screen bg-linear-to-br from-gray-900 via-gray-800 to-gray-900 flex items-center justify-center">
+        <Card className="bg-gray-900/50 border-gray-800 max-w-md mx-4">
+          <CardContent className="p-8 text-center">
+            <ShieldAlert className="w-16 h-16 text-red-400 mx-auto mb-4" />
+            <h2 className="text-2xl font-bold text-white mb-2">Access Denied</h2>
+            <p className="text-gray-400 mb-6">{!isConnected ? "Please connect your wallet to access this page" : "Only administrators can create battles"}</p>
+            <Link href="/">
+              <Button className="bg-blue-600 hover:bg-blue-700">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Go to Home
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-linear-to-br from-gray-900 via-gray-800 to-gray-900">
       {/* Header */}
@@ -226,13 +321,13 @@ export default function CreateBattlePage() {
                         onClick={() => handleMemberSelect(member)}>
                         <CardContent className="p-4">
                           <div className="flex items-center gap-3">
-                            <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-gray-700 flex-shrink-0">
+                            <div className="relative w-12 h-12 rounded-lg overflow-hidden bg-gray-700 shrink-0">
                               <Image src={member.avatar_url || "/placeholder.svg"} alt={member.name} fill className="object-cover" />
                             </div>
                             <div className="flex-1 min-w-0">
                               <div className="flex items-center gap-2">
                                 <h3 className="text-white font-medium truncate">{member.name}</h3>
-                                {isSelected(member.id) && <Check className="w-4 h-4 text-blue-400 flex-shrink-0" />}
+                                {isSelected(member.id) && <Check className="w-4 h-4 text-blue-400 shrink-0" />}
                               </div>
                               <p className="text-gray-400 text-sm truncate">{member.category}</p>
                               <p className="text-gray-500 text-xs">{member.total_votes} votes</p>
