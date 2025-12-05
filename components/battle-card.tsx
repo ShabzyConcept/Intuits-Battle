@@ -16,8 +16,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useIntuitionClients } from "@/hooks/useIntuitionClients";
 import { deposit } from "@0xintuition/protocol";
-import { type Address } from "viem";
+import { parseEther, type Address, type Hex } from "viem";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
+import { createAtomFromString, createTriples, getTripleCost, getTripleDetails, globalSearch, calculateTripleId } from "@0xintuition/sdk";
+import { GetTriples } from "@0xintuition/graphql";
 
 interface BattleCardProps {
   battle: Battle;
@@ -109,7 +111,6 @@ export function BattleCard({ battle, onVote, userVote, isVoting = false, showVot
       setIsStaking(true);
       setLocalVoting(true);
 
-      // Get the member's atomId
       const isMember1 = memberId === battle.member_a_id;
       const member = isMember1 ? battle.member_a : battle.member_b;
 
@@ -117,7 +118,58 @@ export function BattleCard({ battle, onVote, userVote, isVoting = false, showVot
         throw new Error("Member atom ID not found");
       }
 
-      // Stake on the atom using Intuition protocol
+      // Fetch full member details to get the actual atom ID
+      const { data: memberData, error: memberError } = await supabaseBrowser.from("community_members").select("atomId").eq("id", parseInt(memberId)).single();
+
+      if (memberError || !memberData?.atomId) {
+        throw new Error("Could not fetch member atom ID from database");
+      }
+
+      const memberAtomId = memberData.atomId;
+      console.log("Member Atom ID from database:", memberAtomId);
+
+      let tripleId = isMember1 ? battle.member1_triple_id : battle.member2_triple_id;
+
+      // If triple ID is not saved, calculate it
+      if (!tripleId && intuitionClients) {
+        toast({
+          title: "Calculating Triple ID...",
+          description: "Computing triple ID for voting",
+        });
+
+        try {
+          // Get predicate (embodies) and object (battle description) atoms
+          const predicateSearch = await globalSearch("embodies", { atomsLimit: 10 });
+          const predicateAtom = predicateSearch?.atoms.find((el: any) => el.label === "embodies" && el.type === "TextObject")?.term_id;
+
+          const qualitySearch = await globalSearch(battle.description || "", { atomsLimit: 10 });
+          const qualityAtom = qualitySearch?.atoms.find((el: any) => el.label === battle.description && el.type === "Thing")?.term_id;
+
+          if (predicateAtom && qualityAtom) {
+            console.log("Atom IDs:", { memberAtomId, predicateAtom, qualityAtom });
+
+            // Save the triple ID to the database for future use
+            const updateField = isMember1 ? "member1_triple_id" : "member2_triple_id";
+            await supabaseBrowser
+              .from("battles")
+              .update({ [updateField]: tripleId })
+              .eq("id", battleId);
+
+            toast({
+              title: "Triple ID Calculated",
+              description: "Using calculated triple ID for voting",
+            });
+          }
+        } catch (searchError) {
+          console.error("Error calculating triple ID:", searchError);
+        }
+      }
+
+      if (!tripleId) {
+        throw new Error("Triple ID not found. Please contact admin to create the battle triples.");
+      }
+
+      // Stake on the triple using Intuition protocol
       if (intuitionClients) {
         const amount = parseFloat(stakeAmount);
         if (isNaN(amount) || amount <= 0) {
@@ -129,9 +181,27 @@ export function BattleCard({ battle, onVote, userVote, isVoting = false, showVot
           description: `Staking ${amount} TRUST tokens on ${member.name}`,
         });
 
+        const depositAmount = parseEther(stakeAmount);
+        const stakeAmountToUse = depositAmount && depositAmount > 0n ? depositAmount : 10_000_000_000_000_000n;
+
+        // Deposit into the triple vault
+        const depositResult = await deposit(
+          {
+            walletClient: intuitionClients.walletClient,
+            publicClient: intuitionClients.publicClient,
+            address: intuitionClients.address,
+          } as any,
+          {
+            args: [intuitionClients.walletClient.account.address, tripleId as `0x${string}`, BigInt(2), 0n],
+            value: stakeAmountToUse,
+          } as any
+        );
+
+        console.log("Deposit result:", depositResult);
+
         toast({
           title: "Stake Successful!",
-          description: `Successfully staked ${amount} TRUST tokens.`,
+          description: `Successfully staked ${amount} TRUST tokens on "${member.name} embodies ${battle.description}".`,
         });
       } else {
         throw new Error("Wallet client not available. Please ensure you're on the correct network.");
@@ -272,7 +342,7 @@ export function BattleCard({ battle, onVote, userVote, isVoting = false, showVot
               )}
               {showVoteButtons && isConnected && isVotingDisabled && battle.status === "active" && (
                 <Button size="sm" variant="outline" disabled className="border-gray-700 text-gray-500 cursor-not-allowed bg-transparent">
-                  {hasVoted ? "Already Voted" : isExpired ? "Expired" : "Vote"}
+                  {hasVoted ? "Already Voted" : isExpired ? "Expired" : "Upcoming"}
                 </Button>
               )}
             </div>
