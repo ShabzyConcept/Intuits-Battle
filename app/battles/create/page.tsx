@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabaseBrowser } from "@/lib/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowLeft, Search, Check, Loader2, ShieldAlert } from "lucide-react";
@@ -14,9 +14,13 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { useAccount } from "wagmi";
 import { isAdminWallet } from "@/lib/auth";
+import { useIntuitionClients } from "@/hooks/useIntuitionClients";
+import { createAtomFromString, globalSearch } from "@0xintuition/sdk";
+import { createTriples, getTripleCost, getMultiVaultAddressFromChainId } from "@0xintuition/protocol";
 
 interface Member {
   id: string;
+  atomId: string;
   name: string;
   description: string;
   category: string;
@@ -31,15 +35,20 @@ export default function CreateBattlePage() {
   const [selectedMember1, setSelectedMember1] = useState<Member | null>(null);
   const [selectedMember2, setSelectedMember2] = useState<Member | null>(null);
   const [battleTitle, setBattleTitle] = useState("");
+  const [selectedTitleOption, setSelectedTitleOption] = useState("");
   const [battleDescription, setBattleDescription] = useState("");
+  const [selectedDescriptionId, setSelectedDescriptionId] = useState<number | null>(null);
+  const [battleDescriptions, setBattleDescriptions] = useState<{ id: number; title: string; description: string; usage_count: number }[]>([]);
   const [endDate, setEndDate] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadingDescriptions, setLoadingDescriptions] = useState(true);
   const [creating, setCreating] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const { toast } = useToast();
   const router = useRouter();
   const { address, isConnected } = useAccount();
+  const intuitionClient = useIntuitionClients();
 
   useEffect(() => {
     async function checkAdmin() {
@@ -66,6 +75,7 @@ export default function CreateBattlePage() {
   useEffect(() => {
     if (isAdmin && !checkingAuth) {
       fetchMembers();
+      fetchBattleDescriptions();
     }
   }, [isAdmin, checkingAuth]);
 
@@ -103,6 +113,28 @@ export default function CreateBattlePage() {
       });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchBattleDescriptions() {
+    try {
+      setLoadingDescriptions(true);
+      const { data, error } = await supabaseBrowser.rpc("get_active_battle_descriptions");
+
+      if (error) {
+        console.error("Error fetching battle descriptions:", error);
+        toast({
+          title: "Error",
+          description: "Failed to load battle descriptions",
+          variant: "error",
+        });
+      } else if (data) {
+        setBattleDescriptions(data);
+      }
+    } catch (err) {
+      console.error("Unexpected error:", err);
+    } finally {
+      setLoadingDescriptions(false);
     }
   }
 
@@ -150,10 +182,10 @@ export default function CreateBattlePage() {
       return;
     }
 
-    if (!battleTitle.trim()) {
+    if (!selectedTitleOption || !battleDescription) {
       toast({
         title: "Title Required",
-        description: "Please enter a battle title",
+        description: "Please select a battle title",
         variant: "error",
       });
       return;
@@ -162,11 +194,95 @@ export default function CreateBattlePage() {
     try {
       setCreating(true);
 
+      // Create Intuition triples and capture their IDs for voting
+      let triple1Id = null;
+      let triple2Id = null;
+
+      if (intuitionClient && battleDescription) {
+        try {
+          toast({
+            title: "Creating Voting Claims...",
+            description: "Setting up Intuition triples for battle voting.",
+          });
+
+          // Search for or create predicate atom ("embodies")
+          let predicateSearchResult = await globalSearch("embodies", {
+            atomsLimit: 10,
+            triplesLimit: 20,
+          });
+
+          let predicateAtom: any = predicateSearchResult?.atoms.find((el) => el.label === "embodies" && el.type === "TextObject")?.term_id;
+
+          if (!predicateAtom) {
+            predicateAtom = (await createAtomFromString(intuitionClient, "embodies")).state.termId;
+          }
+
+          // Search for or create quality atom (battle description)
+          let qualitySearchResult = await globalSearch(battleDescription, {
+            atomsLimit: 10,
+          });
+
+          let qualityAtom: any = qualitySearchResult?.atoms.find((el) => el.label === battleDescription && el.type === "TextObject")?.term_id;
+
+          if (!qualityAtom) {
+            const atomResult = await createAtomFromString(intuitionClient, battleDescription);
+            qualityAtom = atomResult.state.termId;
+          }
+
+          const tripleCost = await getTripleCost({
+            address: intuitionClient.address,
+            publicClient: intuitionClient.publicClient,
+          } as any);
+
+          const amountPerTriple = tripleCost;
+
+          const tyy = await createTriples(
+            {
+              walletClient: intuitionClient.walletClient,
+              publicClient: intuitionClient.publicClient,
+              address: intuitionClient.address,
+            } as any,
+            {
+              args: [[selectedMember1.atomId], [predicateAtom], [qualityAtom], [amountPerTriple]],
+              value: amountPerTriple,
+            } as any
+          );
+
+          console.log(tyy);
+
+          await createTriples(
+            {
+              walletClient: intuitionClient.walletClient,
+              publicClient: intuitionClient.publicClient,
+              address: intuitionClient.address,
+            } as any,
+            {
+              args: [[selectedMember2.atomId], [predicateAtom], [qualityAtom], [amountPerTriple]],
+              value: amountPerTriple,
+            } as any
+          );
+
+          toast({
+            title: "Voting Claims Created",
+            description: `Triples created. IDs will be saved on first vote.`,
+          });
+        } catch (tripleError) {
+          console.error("Error creating triples:", tripleError);
+          toast({
+            title: "Warning",
+            description: "Triples creation failed. They will be created on first vote.",
+            variant: "error",
+          });
+        }
+      }
+
       const battleData = {
         title: battleTitle,
         description: battleDescription,
         member1_id: parseInt(selectedMember1.id),
         member2_id: parseInt(selectedMember2.id),
+        member1_triple_id: null,
+        member2_triple_id: null,
         member1_votes: 0,
         member2_votes: 0,
         total_votes: 0,
@@ -185,6 +301,13 @@ export default function CreateBattlePage() {
           variant: "error",
         });
       } else {
+        // Increment usage count for selected description
+        if (selectedDescriptionId) {
+          await supabaseBrowser.rpc("increment_description_usage", {
+            description_id: selectedDescriptionId,
+          });
+        }
+
         toast({
           title: "Battle Created!",
           description: `${selectedMember1.name} vs ${selectedMember2.name} battle has been created`,
@@ -387,28 +510,30 @@ export default function CreateBattlePage() {
                     <Label htmlFor="title" className="text-gray-300">
                       Battle Title *
                     </Label>
-                    <Input
-                      id="title"
-                      value={battleTitle}
-                      onChange={(e) => setBattleTitle(e.target.value)}
-                      placeholder="e.g., Epic Community Showdown"
-                      required
-                      className="bg-gray-800 border-gray-700 text-white"
-                    />
-                  </div>
-
-                  {/* Battle Description */}
-                  <div className="space-y-2">
-                    <Label htmlFor="description" className="text-gray-300">
-                      Description
-                    </Label>
-                    <Textarea
-                      id="description"
-                      value={battleDescription}
-                      onChange={(e) => setBattleDescription(e.target.value)}
-                      placeholder="Describe the battle..."
-                      className="bg-gray-800 border-gray-700 text-white min-h-[100px]"
-                    />
+                    <Select
+                      value={selectedTitleOption}
+                      onValueChange={(value) => {
+                        setSelectedTitleOption(value);
+                        const selected = battleDescriptions.find((d) => d.title === value);
+                        if (selected) {
+                          setBattleTitle(selected.title);
+                          setBattleDescription(selected.description);
+                          setSelectedDescriptionId(selected.id);
+                        }
+                      }}>
+                      <SelectTrigger className="bg-gray-800 border-gray-700 text-white" disabled={loadingDescriptions}>
+                        <SelectValue placeholder={loadingDescriptions ? "Loading titles..." : "Select a battle title"} />
+                      </SelectTrigger>
+                      <SelectContent className="bg-gray-800 border-gray-700">
+                        {battleDescriptions.map((desc) => (
+                          <SelectItem key={desc.id} value={desc.title} className="text-white hover:bg-gray-700">
+                            {desc.title}
+                            {desc.usage_count > 0 && <span className="text-gray-400 text-xs ml-2">({desc.usage_count} uses)</span>}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {battleDescription && <p className="text-sm text-gray-400 italic">Description: {battleDescription}</p>}
                   </div>
 
                   {/* End Date */}
@@ -420,7 +545,7 @@ export default function CreateBattlePage() {
                   </div>
 
                   {/* Create Button */}
-                  <Button type="submit" disabled={!selectedMember1 || !selectedMember2 || !battleTitle || creating} className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700">
+                  <Button type="submit" disabled={!selectedMember1 || !selectedMember2 || !selectedTitleOption || creating} className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700">
                     {creating ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />

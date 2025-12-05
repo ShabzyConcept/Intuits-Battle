@@ -51,6 +51,8 @@ export interface Battle {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  member1_triple_id?: string | null;
+  member2_triple_id?: string | null;
   member_a?: CommunityMember;
   member_b?: CommunityMember;
 }

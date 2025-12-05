@@ -65,6 +65,8 @@ export default function BattlesPage() {
         member_b: battle.member2 ? mapToCommunityMember(battle.member2) : undefined,
         votes_a: battle.member1_votes || 0,
         votes_b: battle.member2_votes || 0,
+        member1_triple_id: battle.member1_triple_id,
+        member2_triple_id: battle.member2_triple_id,
         status: battle.is_active ? "active" : "completed",
         start_time: battle.start_date || battle.created_at,
         end_time: battle.end_date,
